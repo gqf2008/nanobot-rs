@@ -1,0 +1,32 @@
+# Rust
+target/
+Cargo.lock
+*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Data (运行时生成)
+workspace/
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+test_output/

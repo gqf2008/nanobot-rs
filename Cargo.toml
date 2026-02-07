@@ -1,0 +1,92 @@
+[package]
+name = "nanobot"
+version = "0.1.0"
+edition = "2021"
+authors = ["Nanobot Team"]
+description = "超轻量级个人 AI Agent - Rust 实现"
+license = "MIT"
+
+[dependencies]
+# 异步运行时
+tokio = { version = "1.35", features = ["full", "rt-multi-thread"] }
+
+# 异步 trait
+async-trait = "0.1"
+
+# 序列化/反序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP 客户端
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+
+# CLI 框架
+clap = { version = "4.4", features = ["derive"] }
+
+# 配置管理
+toml = "0.8"
+dirs = "5.0"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# 错误处理
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Telegram Bot
+teloxide = { version = "0.12", features = ["macros"] }
+
+# Discord Bot
+serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend", "model"] }
+
+# 定时任务
+tokio-cron-scheduler = "0.9"
+
+# 数据库（SQLite 用于 cron 任务持久化）
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "migrate", "chrono"] }
+
+# SHA256（用于飞书签名验证）
+sha2 = "0.10"
+hex = "0.4"
+
+# 正则表达式
+regex = "1.10"
+
+# 交互式命令行
+rustyline = "13.0"
+
+# WebSocket 客户端（用于 WhatsApp Bridge）
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
+# 时间处理
+chrono = { version = "0.4", features = ["serde"] }
+
+# 随机数
+rand = "0.8"
+
+# 延迟初始化
+lazy_static = "1.4"
+
+# 命令执行
+tokio-process = "0.2"
+
+# Markdown 处理
+pulldown-cmark = "0.9"
+
+# UUID
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# 环境变量
+dotenvy = "0.15"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.12"
+tempfile = "3.9"
+
+[[bin]]
+name = "nanobot"
+path = "src/main.rs"
