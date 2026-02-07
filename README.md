@@ -4,18 +4,20 @@
 
 ## 功能特性
 
-- **🧠 多 LLM 提供商** - 支持 OpenRouter、DeepSeek、OpenAI、Anthropic
-- **📡 多通道集成** - 支持 Telegram Bot（可扩展 Discord、Slack 等）
+- **🧠 多 LLM 提供商** - 支持 OpenRouter、DeepSeek、Moonshot/Kimi、vLLM、OpenAI、Anthropic
+- **📡 多通道集成** - 支持 Telegram、Discord、飞书(Lark/Feishu)、WhatsApp
 - **🔧 工具系统** - Shell 命令、文件读写、Web 搜索
-- **💾 持久化内存** - SQLite 存储对话历史和长期记忆
+- **💾 Markdown 内存** - 使用 Markdown 文件存储对话历史和长期记忆（与 Python 版本兼容）
 - **⚙️ 灵活配置** - TOML 配置文件 + 环境变量覆盖
 - **🚀 简单易用** - 类似原版 nanobot 的 CLI 体验
+- **🔒 安全加固** - 工作区限制、白名单控制、环境变量安全配置
 
 ## 快速开始
 
 ### 1. 克隆并构建
 
 ```bash
+git clone https://github.com/gqf2008/nanobot-rs.git
 cd nanobot-rs
 cargo build --release
 ```
@@ -35,9 +37,16 @@ cargo run -- init --config /path/to/config.toml
 编辑 `~/.nanobot/config.toml` 或设置环境变量：
 
 ```bash
+# LLM 提供商
 export OPENROUTER_API_KEY="your-openrouter-api-key"
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export MOONSHOT_API_KEY="your-moonshot-api-key"
+
+# 通道
 export TELEGRAM_BOT_TOKEN="your-telegram-bot-token"
+export DISCORD_BOT_TOKEN="your-discord-bot-token"
+export FEISHU_APP_ID="your-feishu-app-id"
+export FEISHU_APP_SECRET="your-feishu-app-secret"
 ```
 
 ### 4. 运行
@@ -51,6 +60,12 @@ cargo run -- agent
 
 # 启动 Telegram Bot
 cargo run -- gateway --channel telegram
+
+# 启动 Discord Bot
+cargo run -- gateway --channel discord
+
+# 启动飞书 Bot
+cargo run -- gateway --channel feishu
 ```
 
 ## CLI 命令
@@ -58,7 +73,7 @@ cargo run -- gateway --channel telegram
 | 命令 | 描述 |
 |------|------|
 | `nanobot agent` | 启动交互式 AI 对话 |
-| `nanobot gateway` | 启动网关服务（Telegram Bot） |
+| `nanobot gateway` | 启动网关服务（Bot） |
 | `nanobot status` | 查看系统状态 |
 | `nanobot init` | 初始化配置文件 |
 | `nanobot tool <name>` | 直接执行工具 |
@@ -84,17 +99,47 @@ base_url = "https://api.deepseek.com"
 default_model = "deepseek-chat"
 timeout_secs = 60
 
+[llm.moonshot]
+api_key = "your-moonshot-api-key"
+base_url = "https://api.moonshot.cn/v1"
+default_model = "moonshot-v1-8k"
+timeout_secs = 60
+
+[llm.vllm]
+# 本地 vLLM 部署
+api_key = ""
+base_url = "http://localhost:8000/v1"
+default_model = "default"
+timeout_secs = 60
+
 [channel.telegram]
 bot_token = "your-bot-token"
 allowed_users = []  # 留空表示允许所有用户
 
+[channel.discord]
+bot_token = "your-discord-bot-token"
+application_id = "your-application-id"
+allowed_guilds = []  # 允许的服务器
+allowed_channels = []  # 允许的频道
+allowed_users = []  # 允许的用户
+
+[channel.feishu]
+app_id = "your-app-id"
+app_secret = "your-app-secret"
+allowed_users = []  # 允许的用户 Open ID
+
+[channel.whatsapp]
+bridge_url = "ws://localhost:3000"  # WhatsApp Bridge WebSocket 地址
+allowed_users = []  # 允许的手机号
+
 [memory]
-db_path = "/home/user/.nanobot/memory.db"
+# Memory 工作目录（用于存储 Markdown 记忆文件）
+workspace_path = "/home/user/.nanobot"
 max_memories = 1000
 
 [tools]
 shell_whitelist = ["echo", "cat", "ls", "pwd", "git"]
-allowed_paths = ["/home", "/tmp"]
+allowed_paths = ["/home/user/workspace", "/tmp"]
 search_api_key = "your-brave-search-key"
 ```
 
@@ -108,6 +153,47 @@ search_api_key = "your-brave-search-key"
 | `list_dir` | 列出目录内容 |
 | `web_search` | Web 搜索（需要 Brave API Key） |
 
+## Memory 系统
+
+与 Python 版本兼容的 Markdown 文件格式：
+
+### 日常笔记
+`~/.nanobot/memory/2026-02-07.md`
+```markdown
+# 2026-02-07
+
+## 12:30 - User
+Hello, how are you?
+
+## 12:31 - Assistant
+I'm doing well, thank you!
+```
+
+### 长期记忆
+`~/.nanobot/memory/MEMORY.md`
+```markdown
+# Long-term Memory
+
+## Important Facts
+- **User name**: Gao
+- **Preferred language**: Chinese
+
+## Preferences
+- **Programming language**: Rust
+```
+
+### 对话历史
+`~/.nanobot/memory/conversations/{session_id}.md`
+```markdown
+# Conversation: test-session
+
+## 2026-02-07 12:30:00
+**user**: Hello
+
+## 2026-02-07 12:30:05
+**assistant**: Hi there!
+```
+
 ## 项目结构
 
 ```
@@ -118,16 +204,27 @@ src/
 ├── llm/              # LLM 提供商
 │   ├── mod.rs
 │   ├── openrouter.rs
-│   └── deepseek.rs
+│   ├── deepseek.rs
+│   ├── moonshot.rs   # Moonshot/Kimi
+│   └── vllm.rs       # 本地 vLLM
 ├── channel/          # 消息通道
 │   ├── mod.rs
-│   └── telegram.rs
+│   ├── telegram.rs
+│   ├── discord.rs
+│   ├── feishu.rs     # 飞书/Lark
+│   └── whatsapp.rs   # WhatsApp (WebSocket Bridge)
 ├── tools/            # 工具系统
 │   ├── mod.rs
 │   ├── shell.rs
 │   ├── file.rs
 │   └── web.rs
-├── memory/           # 内存系统
+├── memory/           # Markdown 内存系统
+│   └── mod.rs
+├── cron/             # 定时任务
+│   └── mod.rs
+├── bus/              # 事件总线
+│   └── mod.rs
+├── session/          # 会话管理
 │   └── mod.rs
 ├── config/           # 配置管理
 │   └── mod.rs
@@ -161,6 +258,16 @@ src/
 2. 实现 `Channel` trait
 3. 在 `ChannelFactory` 中注册
 
+## 安全加固
+
+详见 [SECURITY.md](SECURITY.md)
+
+- 工作区限制
+- 文件工具白名单
+- Shell 命令白名单
+- 通道用户白名单
+- 环境变量安全配置
+
 ## 测试
 
 ```bash
@@ -174,10 +281,20 @@ cargo test test_name
 cargo test -- --nocapture
 ```
 
+## 分支管理
+
+采用 GitHub 分支管理风格：
+
+- `main` - 主分支（生产就绪）
+- `develop` - 开发分支
+- `feature/*` - 功能分支
+- `hotfix/*` - 紧急修复分支
+- `release/*` - 发布分支
+
 ## 许可证
 
 MIT
 
 ## 致谢
 
-原版 [nanobot](https://github.com/danielmiessler/nanobot) 的灵感来源
+原版 [nanobot](https://github.com/HKUDS/nanobot) 的灵感来源
