@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use crate::channel::Channel;
+use crate::channel::{Channel, Media, MediaType};
 use crate::config::FeishuConfig;
 
 /// 飞书访问令牌响应
@@ -250,6 +250,162 @@ impl FeishuChannel {
         Ok(())
     }
 
+    /// 上传图片到飞书
+    async fn upload_image(&self, image_path: &str) -> Result<String> {
+        let token = self.get_access_token().await?;
+
+        let response: reqwest::Response = self.http_client
+            .post("https://open.feishu.cn/open-apis/im/v1/images")
+            .header("Authorization", format!("Bearer {}", token))
+            .multipart(
+                reqwest::multipart::Form::new()
+                    .file("image", image_path)
+                    .await
+                    .context("读取图片文件失败")?,
+            )
+            .send()
+            .await
+            .context("上传图片失败")?;
+
+        #[derive(Debug, Clone, serde::Deserialize)]
+        struct UploadResponse {
+            code: i32,
+            msg: String,
+            data: Option<serde_json::Value>,
+        }
+
+        let upload_response: UploadResponse = response
+            .json::<UploadResponse>()
+            .await
+            .context("解析上传响应失败")?;
+
+        if upload_response.code != 0 {
+            anyhow::bail!("上传图片失败: {}", upload_response.msg);
+        }
+
+        let image_key = upload_response
+            .data
+            .and_then(|d| d.get("image_key"))
+            .and_then(|k| k.as_str())
+            .ok_or_else(|| anyhow::anyhow!("图片上传成功但未返回 image_key"))?
+            .to_string();
+
+        info!("图片上传成功: {}", image_key);
+        Ok(image_key)
+    }
+
+    /// 上传文件到飞书
+    async fn upload_file(&self, file_path: &str, file_name: &str) -> Result<String> {
+        let token = self.get_access_token().await?;
+
+        let response: reqwest::Response = self.http_client
+            .post("https://open.feishu.cn/open-apis/im/v1/files")
+            .header("Authorization", format!("Bearer {}", token))
+            .multipart(
+                reqwest::multipart::Form::new()
+                    .file("file", file_path)
+                    .await
+                    .context("读取文件失败")?
+                    .file_name(file_name.to_string()),
+            )
+            .send()
+            .await
+            .context("上传文件失败")?;
+
+        #[derive(Debug, Clone, serde::Deserialize)]
+        struct UploadResponse {
+            code: i32,
+            msg: String,
+            data: Option<serde_json::Value>,
+        }
+
+        let upload_response: UploadResponse = response
+            .json::<UploadResponse>()
+            .await
+            .context("解析上传响应失败")?;
+
+        if upload_response.code != 0 {
+            anyhow::bail!("上传文件失败: {}", upload_response.msg);
+        }
+
+        let file_id = upload_response
+            .data
+            .and_then(|d| d.get("file"))
+            .and_then(|f| f.get("file_id"))
+            .and_then(|id| id.as_str())
+            .ok_or_else(|| anyhow::anyhow!("文件上传成功但未返回 file_id"))?
+            .to_string();
+
+        info!("文件上传成功: {}", file_id);
+        Ok(file_id)
+    }
+
+    /// 发送图片消息
+    async fn send_image_message(&self, receive_id: &str, image_key: &str) -> Result<()> {
+        let token = self.get_access_token().await?;
+
+        let body = serde_json::json!({
+            "receive_id": receive_id,
+            "msg_type": "image",
+            "content": serde_json::json!({
+                "image_key": image_key
+            }).to_string(),
+        });
+
+        let response: reqwest::Response = self.http_client
+            .post("https://open.feishu.cn/open-apis/im/v1/messages")
+            .header("Authorization", format!("Bearer {}", token))
+            .query(&[("receive_id_type", "open_id")])
+            .json(&body)
+            .send()
+            .await
+            .context("发送图片消息失败")?;
+
+        let msg_response: FeishuMessageResponse = response
+            .json::<FeishuMessageResponse>()
+            .await
+            .context("解析消息响应失败")?;
+
+        if msg_response.code != 0 {
+            anyhow::bail!("发送图片消息失败: {}", msg_response.msg);
+        }
+
+        Ok(())
+    }
+
+    /// 发送文件消息
+    async fn send_file_message(&self, receive_id: &str, file_id: &str, file_name: &str) -> Result<()> {
+        let token = self.get_access_token().await?;
+
+        let body = serde_json::json!({
+            "receive_id": receive_id,
+            "msg_type": "file",
+            "content": serde_json::json!({
+                "file_id": file_id
+            }).to_string(),
+        });
+
+        let response: reqwest::Response = self.http_client
+            .post("https://open.feishu.cn/open-apis/im/v1/messages")
+            .header("Authorization", format!("Bearer {}", token))
+            .query(&[("receive_id_type", "open_id")])
+            .json(&body)
+            .send()
+            .await
+            .context("发送文件消息失败")?;
+
+        let msg_response: FeishuMessageResponse = response
+            .json::<FeishuMessageResponse>()
+            .await
+            .context("解析消息响应失败")?;
+
+        if msg_response.code != 0 {
+            anyhow::bail!("发送文件消息失败: {}", msg_response.msg);
+        }
+
+        Ok(())
+    }
+
     /// 验证 Webhook 签名（用于事件订阅）
     pub fn verify_webhook_signature(
         &self,
@@ -403,6 +559,71 @@ impl Channel for FeishuChannel {
 
         // 发送消息
         self.send_text_message(target, content).await
+    }
+
+    async fn send_media(
+        &self,
+        target: &str,
+        media: &Media,
+    ) -> Result<()> {
+        info!("发送飞书媒体消息到 {}", target);
+
+        // 检查白名单
+        if !self.is_open_id_allowed(target) {
+            anyhow::bail!("用户 {} 不在白名单中", target);
+        }
+
+        match media.media_type {
+            MediaType::Image => {
+                // 获取图片路径
+                let image_path = media
+                    .path
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("图片路径未提供"))?;
+
+                // 上传图片
+                let image_key = self.upload_image(image_path).await?;
+
+                // 发送图片消息
+                self.send_image_message(target, &image_key).await?;
+            }
+            MediaType::File => {
+                // 获取文件路径和名称
+                let file_path = media
+                    .path
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("文件路径未提供"))?;
+                let file_name = media
+                    .name
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("文件名未提供"))?;
+
+                // 上传文件
+                let file_id = self.upload_file(file_path, file_name).await?;
+
+                // 发送文件消息
+                self.send_file_message(target, &file_id, file_name).await?;
+            }
+            MediaType::Audio => {
+                // 飞书不支持直接发送音频消息类型，使用文件方式发送
+                let file_path = media
+                    .path
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("音频文件路径未提供"))?;
+                let file_name = media
+                    .name
+                    .as_deref()
+                    .unwrap_or("audio.wav");
+
+                // 上传文件
+                let file_id = self.upload_file(file_path, file_name).await?;
+
+                // 发送文件消息
+                self.send_file_message(target, &file_id, file_name).await?;
+            }
+        }
+
+        Ok(())
     }
 }
 
