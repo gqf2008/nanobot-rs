@@ -66,6 +66,9 @@ pub struct LlmConfig {
     /// DeepSeek 配置
     #[serde(default)]
     pub deepseek: ProviderConfig,
+    /// MiniMax 配置
+    #[serde(default)]
+    pub minimax: ProviderConfig,
     /// Moonshot 配置
     #[serde(default)]
     pub moonshot: ProviderConfig,
@@ -336,6 +339,9 @@ impl Config {
         if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
             self.llm.deepseek.api_key = Some(key);
         }
+        if let Ok(key) = std::env::var("MINIMAX_API_KEY") {
+            self.llm.minimax.api_key = Some(key);
+        }
         if let Ok(key) = std::env::var("MOONSHOT_API_KEY") {
             self.llm.moonshot.api_key = Some(key);
         }
@@ -412,6 +418,12 @@ impl Config {
                     api_key: Some("your-deepseek-api-key".to_string()),
                     base_url: Some("https://api.deepseek.com".to_string()),
                     default_model: Some("deepseek-chat".to_string()),
+                    timeout_secs: 60,
+                },
+                minimax: ProviderConfig {
+                    api_key: Some("your-minimax-api-key".to_string()),
+                    base_url: Some("https://api.minimax.io/v1".to_string()),
+                    default_model: Some("MiniMax-M2.1".to_string()),
                     timeout_secs: 60,
                 },
                 moonshot: ProviderConfig {

@@ -1,6 +1,6 @@
 //! LLM 提供商模块
-//! 
-//! 支持多个 LLM 提供商：OpenRouter、DeepSeek、Moonshot/Kimi、vLLM、OpenAI、Anthropic
+//!
+//! 支持多个 LLM 提供商：OpenRouter、DeepSeek、Moonshot/Kimi、MiniMax、vLLM、OpenAI、Anthropic
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub mod deepseek;
+pub mod minimax;
 pub mod moonshot;
 pub mod openrouter;
 pub mod vllm;
@@ -198,6 +199,16 @@ impl LlmProviderFactory {
                 );
                 Ok(Arc::new(provider))
             }
+            "minimax" => {
+                let api_key = config.api_key.as_ref()
+                    .ok_or_else(|| anyhow!("MiniMax 需要 API Key"))?;
+                let provider = minimax::MiniMaxProvider::new(
+                    api_key.clone(),
+                    config.base_url.clone(),
+                    Some(config.timeout_secs),
+                );
+                Ok(Arc::new(provider))
+            }
             "vllm" => {
                 let api_key = config.api_key.clone().unwrap_or_default();
                 let provider = vllm::VllmProvider::new(
@@ -240,6 +251,16 @@ impl LlmManager {
                     providers.insert("deepseek".to_string(), provider);
                 }
                 Err(e) => tracing::warn!("无法创建 DeepSeek 提供商: {}", e),
+            }
+        }
+
+        // 注册 MiniMax
+        if config.llm.minimax.api_key.is_some() {
+            match LlmProviderFactory::create("minimax", &config.llm.minimax) {
+                Ok(provider) => {
+                    providers.insert("minimax".to_string(), provider);
+                }
+                Err(e) => tracing::warn!("无法创建 MiniMax 提供商: {}", e),
             }
         }
 
