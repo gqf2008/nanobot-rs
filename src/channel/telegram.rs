@@ -91,16 +91,17 @@ impl TelegramChannel {
             }
             Command::Status => {
                 let ctx_len = self.agent.context_length().await;
+                let session_id = self.agent.session_id().await;
                 format!(
                     "📊 *状态信息*\n\n\
                     会话 ID: `{}`\n\
                     上下文消息数: {}\n\
                     提供商: {}\n\
                     模型: {}",
-                    self.agent.session_id(),
+                    session_id,
                     ctx_len,
-                    self.agent.session_id(), // 使用 session_id 作为占位符
-                    "default"
+                    "deepseek",
+                    "deepseek-chat"
                 )
             }
         };
@@ -137,6 +138,10 @@ impl TelegramChannel {
         // 显示"正在输入"状态
         bot.send_chat_action(msg.chat.id, teloxide::types::ChatAction::Typing)
             .await?;
+
+        // 设置会话 ID 为 telegram:chat_id，这样重启后能记住对话
+        let session_key = format!("telegram:{}", msg.chat.id.0);
+        self.agent.set_session_id(&session_key).await;
 
         // 调用 Agent
         match self.agent.chat(text).await {

@@ -11,8 +11,8 @@ use crate::config::Config;
 pub async fn run(config: Config, channel: Option<String>) -> Result<()> {
     info!("启动 Nanobot Gateway...");
 
-    // 创建 Agent
-    let agent = Arc::new(Agent::new(config.clone()).await?);
+    // 创建 Agent（不指定 session_id，使用默认值）
+    let agent = Arc::new(Agent::new(config.clone(), None).await?);
 
     let mut manager = ChannelManager::new();
 

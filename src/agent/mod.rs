@@ -22,7 +22,7 @@ pub struct Agent {
     llm_manager: LlmManager,
     tool_registry: ToolRegistry,
     memory: Option<Arc<MemoryStore>>,
-    session_id: String,
+    session_id: Mutex<String>,
     context: Mutex<AgentContext>,
 }
 
@@ -35,7 +35,10 @@ struct AgentContext {
 
 impl Agent {
     /// 创建新的 Agent 实例
-    pub async fn new(config: Config) -> Result<Self> {
+    ///
+    /// * `config` - 配置对象
+    /// * `session_id` - 可选的会话 ID，如果为 None 则生成新的 UUID
+    pub async fn new(config: Config, session_id: Option<String>) -> Result<Self> {
         let llm_manager = LlmManager::new(&config)?;
         let tool_registry = ToolRegistry::default_with_config(&config);
         
@@ -52,7 +55,8 @@ impl Agent {
             None
         };
 
-        let session_id = Uuid::new_v4().to_string();
+        // 如果提供了 session_id 则使用，否则生成新的 UUID
+        let session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
         // 初始化上下文
         let mut messages = vec![Message::system(&config.agent.system_prompt)];
@@ -61,6 +65,11 @@ impl Agent {
         if let Some(ref mem) = memory {
             let history = mem.get_conversation(&session_id, config.agent.max_context as i64).await?;
             for msg in history {
+                // DeepSeek API 要求 tool 消息必须有 tool_call_id，跳过无效的 tool 消息
+                if msg.role == "tool" && msg.tool_call_id.is_none() {
+                    continue;
+                }
+                
                 let role = match msg.role.as_str() {
                     "user" => Role::User,
                     "assistant" => Role::Assistant,
@@ -71,7 +80,7 @@ impl Agent {
                     role,
                     content: msg.content,
                     tool_calls: msg.tool_calls.and_then(|t| serde_json::from_str(&t).ok()),
-                    tool_call_id: None,
+                    tool_call_id: msg.tool_call_id,
                 });
             }
         }
@@ -81,7 +90,7 @@ impl Agent {
             llm_manager,
             tool_registry,
             memory,
-            session_id,
+            session_id: Mutex::new(session_id),
             context: Mutex::new(AgentContext {
                 messages,
                 total_tokens: 0,
@@ -103,7 +112,8 @@ impl Agent {
             
             // 保存到内存
             if let Some(ref memory) = self.memory {
-                let _ = memory.add_message(&self.session_id, "user", &content, None).await;
+                let session_id = self.session_id.lock().await.clone();
+                let _ = memory.add_message(&session_id, "user", &content, None).await;
             }
         }
 
@@ -119,6 +129,7 @@ impl Agent {
         let provider = self.llm_manager.default_provider()?;
         let max_iterations = 10;
         let mut iterations = 0;
+        let session_id = self.session_id.lock().await.clone();
 
         loop {
             iterations += 1;
@@ -159,12 +170,14 @@ impl Agent {
 
                     // 保存到内存
                     if let Some(ref memory) = self.memory {
-                        let tool_calls_json = serde_json::to_string(tool_calls).ok();
+                        // 获取第一个 tool_call 的 id
+                        let tool_call_id = tool_calls.first()
+                            .map(|c| c.id.as_str());
                         let _ = memory.add_message(
-                            &self.session_id,
+                            &session_id,
                             "assistant",
                             &message.content,
-                            tool_calls_json.as_deref(),
+                            tool_call_id.as_deref(),
                         ).await;
                     }
 
@@ -200,10 +213,10 @@ impl Agent {
                         // 保存到内存
                         if let Some(ref memory) = self.memory {
                             let _ = memory.add_message(
-                                &self.session_id,
+                                &session_id,
                                 "tool",
                                 &result_str,
-                                None,
+                                Some(&tool_call.id),
                             ).await;
                         }
                     }
@@ -236,7 +249,7 @@ impl Agent {
             // 保存到内存
             if let Some(ref memory) = self.memory {
                 let _ = memory.add_message(
-                    &self.session_id,
+                    &session_id,
                     "assistant",
                     &message.content,
                     None,
@@ -251,11 +264,9 @@ impl Agent {
     }
 
     /// 获取会话 ID
-    pub fn session_id(&self) -> &str {
-        &self.session_id
+    pub async fn session_id(&self) -> String {
+        self.session_id.lock().await.clone()
     }
-
-    /// 获取上下文消息数
     pub async fn context_length(&self) -> usize {
         self.context.lock().await.messages.len()
     }
@@ -265,6 +276,60 @@ impl Agent {
         let mut ctx = self.context.lock().await;
         ctx.messages.clear();
         ctx.messages.push(Message::system(&self.config.agent.system_prompt));
+    }
+
+    /// 设置会话 ID（用于切换对话上下文）
+    ///
+    /// 这会保存当前对话到旧会话，然后加载新会话的历史
+    pub async fn set_session_id(&self, session_id: &str) {
+        // 保存当前消息到旧会话
+        if let Some(ref memory) = self.memory {
+            let old_session_id = self.session_id.lock().await.clone();
+            let ctx = self.context.lock().await;
+            
+            // 保存对话历史
+            for msg in &ctx.messages {
+                let role = match msg.role {
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::Tool => "tool",
+                    Role::System => "system",
+                };
+                let tool_calls = msg.tool_calls.as_ref()
+                    .map(|t| serde_json::to_string(t).ok())
+                    .flatten();
+                let _ = memory.add_message(&old_session_id, role, &msg.content, tool_calls.as_deref()).await;
+            }
+        }
+
+        // 清除并重新加载上下文
+        {
+            let mut ctx = self.context.lock().await;
+            ctx.messages.clear();
+            ctx.messages.push(Message::system(&self.config.agent.system_prompt));
+
+            // 加载新会话的历史
+            if let Some(ref memory) = self.memory {
+                let history = memory.get_conversation(session_id, self.config.agent.max_context as i64).await.unwrap_or_default();
+                for msg in history {
+                    let role = match msg.role.as_str() {
+                        "user" => Role::User,
+                        "assistant" => Role::Assistant,
+                        "tool" => Role::Tool,
+                        _ => Role::System,
+                    };
+                    ctx.messages.push(Message {
+                        role,
+                        content: msg.content,
+                        tool_calls: msg.tool_calls.and_then(|t| serde_json::from_str(&t).ok()),
+                        tool_call_id: None,
+                    });
+                }
+            }
+        }
+
+        // 更新会话 ID
+        *self.session_id.lock().await = session_id.to_string();
     }
 }
 

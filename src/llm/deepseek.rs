@@ -153,16 +153,25 @@ impl From<ChatRequest> for DeepSeekRequest {
     fn from(req: ChatRequest) -> Self {
         Self {
             model: req.model,
-            messages: req.messages.into_iter().map(|m| DeepSeekMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "tool".to_string(),
-                },
-                content: m.content,
-                tool_calls: m.tool_calls,
-                tool_call_id: m.tool_call_id,
+            messages: req.messages.into_iter().map(|m| {
+                // DeepSeek API 要求 tool 角色必须有 tool_call_id
+                let tool_call_id = if m.role == Role::Tool {
+                    m.tool_call_id.or_else(|| Some(format!("call_{}", uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>())))
+                } else {
+                    m.tool_call_id
+                };
+                
+                DeepSeekMessage {
+                    role: match m.role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                        Role::Tool => "tool".to_string(),
+                    },
+                    content: m.content,
+                    tool_calls: m.tool_calls,
+                    tool_call_id,
+                }
             }).collect(),
             tools: req.tools.map(|tools| tools.into_iter().map(|t| DeepSeekTool {
                 tool_type: "function".to_string(),

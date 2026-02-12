@@ -81,6 +81,18 @@ pub struct LlmConfig {
     /// Anthropic 配置
     #[serde(default)]
     pub anthropic: ProviderConfig,
+    /// Google Gemini 配置
+    #[serde(default)]
+    pub gemini: ProviderConfig,
+    /// 智谱 AI (Zhipu) 配置
+    #[serde(default)]
+    pub zhipu: ProviderConfig,
+    /// 阿里云 DashScope (Qwen) 配置
+    #[serde(default)]
+    pub dashscope: ProviderConfig,
+    /// Groq 配置
+    #[serde(default)]
+    pub groq: ProviderConfig,
 }
 
 
@@ -358,6 +370,35 @@ impl Config {
             self.llm.anthropic.api_key = Some(key);
         }
         
+        // Google Gemini
+        if let Ok(key) = std::env::var("GEMINI_API_KEY") {
+            self.llm.gemini.api_key = Some(key);
+        }
+        if let Ok(url) = std::env::var("GEMINI_BASE_URL") {
+            self.llm.gemini.base_url = Some(url);
+        }
+        
+        // 智谱 AI (Zhipu)
+        if let Ok(key) = std::env::var("ZAI_API_KEY") {
+            self.llm.zhipu.api_key = Some(key);
+        }
+        if let Ok(key) = std::env::var("ZHIPUAI_API_KEY") {
+            self.llm.zhipu.api_key = Some(key);
+        }
+        
+        // 阿里云 DashScope (Qwen)
+        if let Ok(key) = std::env::var("DASHSCOPE_API_KEY") {
+            self.llm.dashscope.api_key = Some(key);
+        }
+        if let Ok(url) = std::env::var("DASHSCOPE_BASE_URL") {
+            self.llm.dashscope.base_url = Some(url);
+        }
+        
+        // Groq
+        if let Ok(key) = std::env::var("GROQ_API_KEY") {
+            self.llm.groq.api_key = Some(key);
+        }
+        
         // Telegram
         if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN") {
             self.channel.telegram.bot_token = Some(token);
@@ -440,6 +481,34 @@ impl Config {
                 },
                 openai: ProviderConfig::default(),
                 anthropic: ProviderConfig::default(),
+                /// Google Gemini 配置
+                gemini: ProviderConfig {
+                    api_key: Some("your-gemini-api-key".to_string()),
+                    base_url: Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
+                    default_model: Some("gemini-pro".to_string()),
+                    timeout_secs: 60,
+                },
+                /// 智谱 AI (Zhipu) 配置
+                zhipu: ProviderConfig {
+                    api_key: Some("your-zhipu-api-key".to_string()),
+                    base_url: Some("https://open.bigmodel.cn/api/paas/v4".to_string()),
+                    default_model: Some("glm-4".to_string()),
+                    timeout_secs: 60,
+                },
+                /// 阿里云 DashScope (Qwen) 配置
+                dashscope: ProviderConfig {
+                    api_key: Some("your-dashscope-api-key".to_string()),
+                    base_url: Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
+                    default_model: Some("qwen-max".to_string()),
+                    timeout_secs: 60,
+                },
+                /// Groq 配置
+                groq: ProviderConfig {
+                    api_key: Some("your-groq-api-key".to_string()),
+                    base_url: Some("https://api.groq.com/openai/v1".to_string()),
+                    default_model: Some("llama3-8b-8192".to_string()),
+                    timeout_secs: 60,
+                },
             },
             channel: ChannelConfig {
                 telegram: TelegramConfig {

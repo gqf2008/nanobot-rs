@@ -254,15 +254,21 @@ impl FeishuChannel {
     async fn upload_image(&self, image_path: &str) -> Result<String> {
         let token = self.get_access_token().await?;
 
+        // 读取图片文件内容
+        let file_content = tokio::fs::read(image_path).await
+            .context("读取图片文件失败")?;
+        let file_name = std::path::Path::new(image_path).file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("image.png");
+
+        let part = reqwest::multipart::Part::bytes(file_content)
+            .file_name(file_name.to_string())
+            .mime_str("image/png")?;
+
         let response: reqwest::Response = self.http_client
             .post("https://open.feishu.cn/open-apis/im/v1/images")
             .header("Authorization", format!("Bearer {}", token))
-            .multipart(
-                reqwest::multipart::Form::new()
-                    .file("image", image_path)
-                    .await
-                    .context("读取图片文件失败")?,
-            )
+            .multipart(reqwest::multipart::Form::new().part("image", part))
             .send()
             .await
             .context("上传图片失败")?;
@@ -285,10 +291,9 @@ impl FeishuChannel {
 
         let image_key = upload_response
             .data
-            .and_then(|d| d.get("image_key"))
-            .and_then(|k| k.as_str())
-            .ok_or_else(|| anyhow::anyhow!("图片上传成功但未返回 image_key"))?
-            .to_string();
+            .and_then(|d| d.get("image_key").cloned())
+            .and_then(|k| k.as_str().map(|s| s.to_string()))
+            .ok_or_else(|| anyhow::anyhow!("图片上传成功但未返回 image_key"))?;
 
         info!("图片上传成功: {}", image_key);
         Ok(image_key)
@@ -298,16 +303,18 @@ impl FeishuChannel {
     async fn upload_file(&self, file_path: &str, file_name: &str) -> Result<String> {
         let token = self.get_access_token().await?;
 
+        // 读取文件内容
+        let file_content = tokio::fs::read(file_path).await
+            .context("读取文件失败")?;
+
+        let part = reqwest::multipart::Part::bytes(file_content)
+            .file_name(file_name.to_string())
+            .mime_str("application/octet-stream")?;
+
         let response: reqwest::Response = self.http_client
             .post("https://open.feishu.cn/open-apis/im/v1/files")
             .header("Authorization", format!("Bearer {}", token))
-            .multipart(
-                reqwest::multipart::Form::new()
-                    .file("file", file_path)
-                    .await
-                    .context("读取文件失败")?
-                    .file_name(file_name.to_string()),
-            )
+            .multipart(reqwest::multipart::Form::new().part("file", part))
             .send()
             .await
             .context("上传文件失败")?;
@@ -330,11 +337,10 @@ impl FeishuChannel {
 
         let file_id = upload_response
             .data
-            .and_then(|d| d.get("file"))
-            .and_then(|f| f.get("file_id"))
-            .and_then(|id| id.as_str())
-            .ok_or_else(|| anyhow::anyhow!("文件上传成功但未返回 file_id"))?
-            .to_string();
+            .and_then(|d| d.get("file").cloned())
+            .and_then(|f| f.get("file_id").cloned())
+            .and_then(|id| id.as_str().map(|s| s.to_string()))
+            .ok_or_else(|| anyhow::anyhow!("文件上传成功但未返回 file_id"))?;
 
         info!("文件上传成功: {}", file_id);
         Ok(file_id)

@@ -124,14 +124,21 @@ impl MemoryStore {
         session_id: &str,
         role: &str,
         content: &str,
-        _tool_calls: Option<&str>,
+        tool_call_id: Option<&str>,
     ) -> Result<()> {
         let conv_file = self.get_conversation_file(session_id);
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
+        // 保存 tool_call_id（如果有）- 格式: **tool**: content [call_id:xxx]
+        let tool_call_id_str = if let Some(id) = tool_call_id {
+            format!(" [call_id:{}]", id)
+        } else {
+            String::new()
+        };
+
         let entry = format!(
-            "## {}\n**{}**: {}\n\n",
-            timestamp, role, content
+            "## {}\n**{}**:{}{}\n\n",
+            timestamp, role, content, tool_call_id_str
         );
 
         let existing = if conv_file.exists() {
@@ -327,20 +334,36 @@ fn parse_conversation_markdown(content: &str, session_id: &str) -> Vec<Conversat
                 current_timestamp = dt.with_timezone(&Utc);
             }
         }
-        // 解析消息行: **User**: Hello
+        // 解析消息行: **User**: content 或 **tool**: content [call_id:xxx]
         else if line.starts_with("**") {
-            if let Some(end_idx) = line.find("**:") {
-                let role = line[2..end_idx].to_string();
-                let content = line[end_idx + 3..].to_string();
-                
-                messages.push(ConversationMessage {
-                    id: messages.len() as i64,
-                    session_id: session_id.to_string(),
-                    role: role.to_lowercase(),
-                    content,
-                    tool_calls: None,
-                    created_at: current_timestamp,
-                });
+            // 找到 **role**: 的模式
+            if let Some(colon_idx) = line.find("**:") {
+                // 提取 role (在 ** 和 ** 之间)
+                let role_part = &line[2..colon_idx];
+                if let Some(role_end) = role_part.find("**") {
+                    let role = &role_part[..role_end];
+                    let after_colon = &line[colon_idx + 3..];
+                    
+                    // 解析内容和可选的 call_id
+                    let (content, tool_call_id) = if let Some(call_start) = after_colon.find(" [call_id:") {
+                        let content = &after_colon[..call_start];
+                        let call_id = &after_colon[call_start + 10..];
+                        let call_id = call_id.trim_end_matches(']').to_string();
+                        (content.to_string(), Some(call_id))
+                    } else {
+                        (after_colon.to_string(), None)
+                    };
+                    
+                    messages.push(ConversationMessage {
+                        id: messages.len() as i64,
+                        session_id: session_id.to_string(),
+                        role: role.to_lowercase(),
+                        content,
+                        tool_calls: None,
+                        tool_call_id,
+                        created_at: current_timestamp,
+                    });
+                }
             }
         }
     }
@@ -356,6 +379,7 @@ pub struct ConversationMessage {
     pub role: String,
     pub content: String,
     pub tool_calls: Option<String>,
+    pub tool_call_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

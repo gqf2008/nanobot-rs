@@ -13,7 +13,7 @@ pub async fn run(config: Config, initial_prompt: Option<String>) -> Result<()> {
     info!("启动 Nanobot Agent 模式...");
 
     // 创建 Agent
-    let agent = Arc::new(Agent::new(config).await?);
+    let agent = Arc::new(Agent::new(config, None).await?);
 
     println!("🤖 Nanobot Agent 模式");
     println!("输入 'exit' 或 'quit' 退出，'clear' 清空上下文\n");
@@ -59,7 +59,8 @@ pub async fn run(config: Config, initial_prompt: Option<String>) -> Result<()> {
                     }
                     "status" => {
                         let ctx_len = agent.context_length().await;
-                        println!("会话 ID: {}", agent.session_id());
+                        let sid = agent.session_id().await;
+                        println!("会话 ID: {}", sid);
                         println!("上下文消息数: {}\n", ctx_len);
                         continue;
                     }

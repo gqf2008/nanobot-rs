@@ -1,6 +1,6 @@
 //! LLM 提供商模块
 //!
-//! 支持多个 LLM 提供商：OpenRouter、DeepSeek、Moonshot/Kimi、MiniMax、vLLM、OpenAI、Anthropic
+//! 支持多个 LLM 提供商：OpenRouter、DeepSeek、Moonshot/Kimi、MiniMax、vLLM、OpenAI、Anthropic、Google Gemini、Zhipu、DashScope、Groq
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
+pub mod anthropic;
 pub mod deepseek;
+pub mod gemini;
 pub mod minimax;
 pub mod moonshot;
 pub mod openrouter;
@@ -219,6 +221,26 @@ impl LlmProviderFactory {
                 );
                 Ok(Arc::new(provider))
             }
+            "anthropic" => {
+                let api_key = config.api_key.as_ref()
+                    .ok_or_else(|| anyhow!("Anthropic 需要 API Key"))?;
+                let provider = anthropic::AnthropicProvider::new(
+                    api_key.clone(),
+                    config.base_url.clone(),
+                    Some(config.timeout_secs),
+                );
+                Ok(Arc::new(provider))
+            }
+            "gemini" => {
+                let api_key = config.api_key.as_ref()
+                    .ok_or_else(|| anyhow!("Gemini 需要 API Key"))?;
+                let provider = gemini::GeminiProvider::new(
+                    api_key.clone(),
+                    config.base_url.clone(),
+                    Some(config.timeout_secs),
+                );
+                Ok(Arc::new(provider))
+            }
             _ => Err(anyhow!("未知的 LLM 提供商: {}", name)),
         }
     }
@@ -281,6 +303,26 @@ impl LlmManager {
                     providers.insert("vllm".to_string(), provider);
                 }
                 Err(e) => tracing::warn!("无法创建 vLLM 提供商: {}", e),
+            }
+        }
+
+        // 注册 Anthropic
+        if config.llm.anthropic.api_key.is_some() {
+            match LlmProviderFactory::create("anthropic", &config.llm.anthropic) {
+                Ok(provider) => {
+                    providers.insert("anthropic".to_string(), provider);
+                }
+                Err(e) => tracing::warn!("无法创建 Anthropic 提供商: {}", e),
+            }
+        }
+
+        // 注册 Gemini
+        if config.llm.gemini.api_key.is_some() {
+            match LlmProviderFactory::create("gemini", &config.llm.gemini) {
+                Ok(provider) => {
+                    providers.insert("gemini".to_string(), provider);
+                }
+                Err(e) => tracing::warn!("无法创建 Gemini 提供商: {}", e),
             }
         }
 
