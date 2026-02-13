@@ -1,17 +1,28 @@
 //! 飞书(Feishu/Lark) 通道实现
 //!
-//! 使用飞书开放平台的 Webhook 和 Bot API
+//! 使用飞书开放平台的 Webhook 和 Bot API，支持 WebSocket 长连接模式
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::LinkedList;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::channel::{Channel, Media, MediaType};
 use crate::config::FeishuConfig;
+
+/// 消息类型映射
+const MSG_TYPE_MAP: &[(&str, &str)] = &[
+    ("image", "[image]"),
+    ("audio", "[audio]"),
+    ("file", "[file]"),
+    ("sticker", "[sticker]"),
+];
 
 /// 飞书访问令牌响应
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -43,6 +54,8 @@ pub struct FeishuChannel {
     running: RwLock<bool>,
     /// HTTP 客户端
     http_client: reqwest::Client,
+    /// 消息去重缓存 (Ordered set - 只保存最近 1000 条)
+    processed_message_ids: RwLock<LinkedList<String>>,
 }
 
 impl FeishuChannel {
@@ -68,7 +81,44 @@ impl FeishuChannel {
             token_expire_at: RwLock::new(None),
             running: RwLock::new(false),
             http_client,
+            processed_message_ids: RwLock::new(LinkedList::new()),
         })
+    }
+
+    /// 检查消息是否已处理（去重）
+    async fn is_message_processed(&self, message_id: &str) -> bool {
+        let cache = self.processed_message_ids.read().await;
+        cache.contains(message_id)
+    }
+
+    /// 添加消息到已处理缓存
+    async fn add_processed_message(&self, message_id: &str) {
+        let mut cache = self.processed_message_ids.write().await;
+        // 保持缓存大小不超过 1000
+        if cache.len() >= 1000 {
+            cache.pop_front();
+        }
+        cache.push_back(message_id.to_string());
+    }
+
+    /// 清理过期的消息 ID
+    async fn trim_message_cache(&self) {
+        let mut cache = self.processed_message_ids.write().await;
+        while cache.len() > 1000 {
+            cache.pop_front();
+        }
+    }
+
+    /// 获取消息类型的显示文本
+    fn get_msg_type_text(&self, msg_type: &str) -> &str {
+        MSG_TYPE_MAP
+            .iter()
+            .find(|(t, _)| *t == msg_type)
+            .map(|(_, text)| *text)
+            .unwrap_or_else(|| {
+                let text = format!("[{}]", msg_type);
+                Box::leak(text.into_boxed_str())
+            })
     }
 
     /// 检查用户是否在白名单中
@@ -250,8 +300,210 @@ impl FeishuChannel {
         Ok(())
     }
 
+    /// 发送增强型卡片消息（支持 Markdown + 表格）
+    async fn send_enhanced_card_message(
+        &self,
+        receive_id: &str,
+        content: &str,
+    ) -> Result<()> {
+        let token = self.get_access_token().await?;
+
+        // 根据 chat_id 格式确定 receive_id_type
+        // open_id 以 "ou_" 开头，chat_id 以 "oc_" 开头
+        let receive_id_type = if receive_id.starts_with("oc_") {
+            "chat_id"
+        } else {
+            "open_id"
+        };
+
+        // 构建支持 Markdown 表格的卡片
+        let elements = self.build_card_elements(content);
+        let card = serde_json::json!({
+            "config": {
+                "wide_screen_mode": true
+            },
+            "elements": elements
+        });
+
+        let body = serde_json::json!({
+            "receive_id": receive_id,
+            "msg_type": "interactive",
+            "content": card.to_string(),
+        });
+
+        let response: reqwest::Response = self.http_client
+            .post("https://open.feishu.cn/open-apis/im/v1/messages")
+            .header("Authorization", format!("Bearer {}", token))
+            .query(&[("receive_id_type", receive_id_type)])
+            .json(&body)
+            .send()
+            .await
+            .context("发送增强型卡片消息失败")?;
+
+        let msg_response: FeishuMessageResponse = response
+            .json::<FeishuMessageResponse>()
+            .await
+            .context("解析消息响应失败")?;
+
+        if msg_response.code != 0 {
+            let log_id = msg_response.msg;
+            anyhow::bail!(
+                "发送飞书消息失败: code={}, msg={}, log_id={}",
+                msg_response.code,
+                msg_response.msg,
+                log_id
+            );
+        } else {
+            debug!("飞书消息已发送到 {}", receive_id);
+        }
+
+        Ok(())
+    }
+
+    /// 解析 Markdown 表格为飞书表格元素
+    fn parse_md_table(&self, table_text: &str) -> Option<serde_json::Value> {
+        let lines: Vec<&str> = table_text
+            .trim()
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        if lines.len() < 3 {
+            return None;
+        }
+
+        let split = |l: &str| l.trim_matches('|').split('|').map(|c| c.trim()).collect::<Vec<_>>();
+        let headers = split(lines[0]);
+        let rows: Vec<Vec<_>> = lines[2..].iter().map(|l| split(l)).collect();
+
+        let columns: Vec<serde_json::Value> = headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| {
+                serde_json::json!({
+                    "tag": "column",
+                    "name": format!("c{}", i),
+                    "display_name": h,
+                    "width": "auto"
+                })
+            })
+            .collect();
+
+        let table_rows: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|row| {
+                let row_json: serde_json::Map<String, serde_json::Value> = headers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| {
+                        let value = row.get(i).map(|s| *s).unwrap_or("");
+                        (format!("c{}", i), serde_json::Value::String(value.to_string()))
+                    })
+                    .collect();
+                serde_json::Value::Object(row_json)
+            })
+            .collect();
+
+        Some(serde_json::json!({
+            "tag": "table",
+            "page_size": rows.len() + 1,
+            "columns": columns,
+            "rows": table_rows
+        }))
+    }
+
+    /// 构建卡片元素列表（支持 Markdown + 表格）
+    fn build_card_elements(&self, content: &str) -> Vec<serde_json::Value> {
+        // Markdown 表格正则: 头部 + 分隔行 + 数据行
+        let table_re = Regex::new(
+            r"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)"
+        ).unwrap();
+
+        let mut elements = Vec::new();
+        let mut last_end = 0usize;
+
+        for m in table_re.find_iter(content) {
+            let before = &content[last_end..m.start()].trim();
+            if !before.is_empty() {
+                elements.push(serde_json::json!({
+                    "tag": "markdown",
+                    "content": before
+                }));
+            }
+
+            let table_element = self.parse_md_table(m.as_str());
+            elements.push(
+                table_element.unwrap_or_else(|| {
+                    serde_json::json!({
+                        "tag": "markdown",
+                        "content": m.as_str()
+                    })
+                })
+            );
+
+            last_end = m.end();
+        }
+
+        let remaining = &content[last_end..].trim();
+        if !remaining.is_empty() {
+            elements.push(serde_json::json!({
+                "tag": "markdown",
+                "content": remaining
+            }));
+        }
+
+        if elements.is_empty() {
+            elements.push(serde_json::json!({
+                "tag": "markdown",
+                "content": content
+            }));
+        }
+
+        elements
+    }
+
+    /// 添加反应（反应类型如 THUMBSUP, OK, EYES, DONE, OnIt, HEART）
+    async fn add_reaction(&self, message_id: &str, emoji_type: &str) -> Result<()> {
+        let token = self.get_access_token().await?;
+
+        let body = serde_json::json!({
+            "reaction_type": {
+                "emoji_type": emoji_type
+            }
+        });
+
+        let response: reqwest::Response = self.http_client
+            .post(&format!(
+                "https://open.feishu.cn/open-apis/im/v1/messages/{}/reactions",
+                message_id
+            ))
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&body)
+            .send()
+            .await
+            .context("添加反应失败")?;
+
+        let reaction_response: serde_json::Value = response
+            .json()
+            .await
+            .context("解析反应响应失败")?;
+
+        if let Some(code) = reaction_response.get("code") {
+            if code != 0 {
+                let msg = reaction_response.get("msg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("未知错误");
+                warn!("添加反应失败: code={}, msg={}", code, msg);
+            } else {
+                debug!("已添加 {} 反应到消息 {}", emoji_type, message_id);
+            }
+        }
+
+        Ok(())
+    }
+
     /// 上传图片到飞书
-    async fn upload_image(&self, image_path: &str) -> Result<String> {
         let token = self.get_access_token().await?;
 
         // 读取图片文件内容
