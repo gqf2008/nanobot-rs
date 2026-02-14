@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod file;
+pub mod message;
 pub mod shell;
 pub mod web;
 

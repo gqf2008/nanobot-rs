@@ -107,6 +107,9 @@ pub struct ProviderConfig {
     /// 超时时间（秒）
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    /// 自定义请求头（用于 API Gateway 等，如 AiHubMix 的 APP-Code）
+    #[serde(default)]
+    pub extra_headers: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

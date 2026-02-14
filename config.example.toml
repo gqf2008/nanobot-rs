@@ -104,6 +104,19 @@ default_model = "default"
 # 请求超时时间（秒）
 timeout_secs = 60
 
+# AiHubMix API Gateway（可选，统一访问多个模型）
+[llm.aihubmix]
+# AiHubMix API Key
+api_key = ""
+# AiHubMix 基础 URL
+base_url = "https://aihubmix.com/v1"
+# 默认模型
+default_model = "deepseek-chat"
+# 请求超时时间（秒）
+timeout_secs = 60
+# 自定义请求头（可选，用于某些需要 APP-Code 的网关）
+# extra_headers = { "APP-Code" = "your-app-code" }
+
 [channel.telegram]
 # Telegram Bot Token
 # 从 @BotFather 获取
