@@ -504,6 +504,7 @@ impl FeishuChannel {
     }
 
     /// 上传图片到飞书
+    async fn upload_image(&self, image_path: &str) -> Result<String> {
         let token = self.get_access_token().await?;
 
         // 读取图片文件内容

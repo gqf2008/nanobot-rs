@@ -9,12 +9,15 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub mod anthropic;
+pub mod dashscope;
 pub mod deepseek;
 pub mod gemini;
+pub mod groq;
 pub mod minimax;
 pub mod moonshot;
 pub mod openrouter;
 pub mod vllm;
+pub mod zhipu;
 
 /// 消息角色
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -241,6 +244,36 @@ impl LlmProviderFactory {
                 );
                 Ok(Arc::new(provider))
             }
+            "zhipu" => {
+                let api_key = config.api_key.as_ref()
+                    .ok_or_else(|| anyhow!("智谱 AI 需要 API Key"))?;
+                let provider = zhipu::ZhipuProvider::new(
+                    api_key.clone(),
+                    config.base_url.clone(),
+                    config.timeout_secs,
+                );
+                Ok(Arc::new(provider))
+            }
+            "dashscope" => {
+                let api_key = config.api_key.as_ref()
+                    .ok_or_else(|| anyhow!("DashScope 需要 API Key"))?;
+                let provider = dashscope::DashScopeProvider::new(
+                    api_key.clone(),
+                    config.base_url.clone(),
+                    config.timeout_secs,
+                );
+                Ok(Arc::new(provider))
+            }
+            "groq" => {
+                let api_key = config.api_key.as_ref()
+                    .ok_or_else(|| anyhow!("Groq 需要 API Key"))?;
+                let provider = groq::GroqProvider::new(
+                    api_key.clone(),
+                    config.base_url.clone(),
+                    config.timeout_secs,
+                );
+                Ok(Arc::new(provider))
+            }
             _ => Err(anyhow!("未知的 LLM 提供商: {}", name)),
         }
     }
@@ -323,6 +356,36 @@ impl LlmManager {
                     providers.insert("gemini".to_string(), provider);
                 }
                 Err(e) => tracing::warn!("无法创建 Gemini 提供商: {}", e),
+            }
+        }
+
+        // 注册智谱 AI (Zhipu)
+        if config.llm.zhipu.api_key.is_some() {
+            match LlmProviderFactory::create("zhipu", &config.llm.zhipu) {
+                Ok(provider) => {
+                    providers.insert("zhipu".to_string(), provider);
+                }
+                Err(e) => tracing::warn!("无法创建智谱 AI 提供商: {}", e),
+            }
+        }
+
+        // 注册阿里云 DashScope
+        if config.llm.dashscope.api_key.is_some() {
+            match LlmProviderFactory::create("dashscope", &config.llm.dashscope) {
+                Ok(provider) => {
+                    providers.insert("dashscope".to_string(), provider);
+                }
+                Err(e) => tracing::warn!("无法创建 DashScope 提供商: {}", e),
+            }
+        }
+
+        // 注册 Groq
+        if config.llm.groq.api_key.is_some() {
+            match LlmProviderFactory::create("groq", &config.llm.groq) {
+                Ok(provider) => {
+                    providers.insert("groq".to_string(), provider);
+                }
+                Err(e) => tracing::warn!("无法创建 Groq 提供商: {}", e),
             }
         }
 
